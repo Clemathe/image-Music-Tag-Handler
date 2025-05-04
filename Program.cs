@@ -1,19 +1,42 @@
-﻿// See https://aka.ms/new-console-template for more information
-
+﻿
 using System.Diagnostics;
 using musicTag;
 using DotNetEnv;
+using Serilog;
 
-Console.WriteLine("🔍 Scan des dossiers en cours...");
-Stopwatch stopwatch = Stopwatch.StartNew();
+// Configure Serilog
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Debug()
+    .WriteTo.Console(
+        outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+    .WriteTo.File("logs/log-.txt",
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 7,
+        outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+    .CreateLogger();
 
-// Load environment variables from .env file
-Env.Load();
+var logger = Log.ForContext<CoverOptimizer>();
 
-// Get the base directory from the environment variables
-string baseDirectory = Env.GetString("base_directory");
+try
+{
+    logger.Information("🔍 Scan des dossiers en cours...");
+    Stopwatch stopwatch = Stopwatch.StartNew();
 
-CoverOptimizer.ProcessMusicFolders(baseDirectory);
+    Env.Load();
+    logger.Debug("Répertoire de travail actuel : {CurrentDirectory}", Environment.CurrentDirectory);
 
-stopwatch.Stop();
-Console.WriteLine($"⏱️ Programme terminée en : {stopwatch.ElapsedMilliseconds} ms");
+    string baseDirectory = Env.GetString("BASE_DIRECTORY");
+    var optimizer = new CoverOptimizer(logger); 
+    optimizer.ProcessMusicFolders(baseDirectory);
+
+    stopwatch.Stop();
+    logger.Information("⏱️ Programme terminée en : {ElapsedMs} ms", stopwatch.ElapsedMilliseconds);
+}
+catch (Exception ex)
+{
+    logger.Fatal(ex, "Une erreur fatale s'est produite.");
+}
+finally
+{
+    Log.CloseAndFlush();
+}

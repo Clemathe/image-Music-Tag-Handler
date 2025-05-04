@@ -1,59 +1,59 @@
 using System.Diagnostics;
 using FlacLibSharp;
+using Serilog;
+using Serilog.Core;
 using SkiaSharp;
 using TagLib;
 using File = System.IO.File;
 
 namespace musicTag;
 
-class CoverOptimizer
+class CoverOptimizer(ILogger logger)
 {
     // Paramètres d'optimisation
-    private static readonly int MaxSize = 1200; // 📏 Taille max (800x800 px)
-    private static readonly int JpegQuality = 85; // 📌 Compression JPEG (1-100)
-    private static readonly string[] ValidExtensions = { ".jpg", ".jpeg", ".png",".webp" };
+    private static readonly int MaxSize = int.Parse(Environment.GetEnvironmentVariable("MAX_SIZE") ?? "1200"); 
+    private static readonly int JpegQuality = int.Parse(Environment.GetEnvironmentVariable("JPEG_QUALITY") ?? "85");
+    private static readonly string[] ValidExtensions = { ".jpg", ".jpeg", ".png", ".webp" };
     private static readonly string[] ValidNames = { "front", "folder", "cover" };
-    private static readonly TraceSource Logger = new TraceSource("CoverOptimizer");
-    private static readonly string[] MusicExtensions = { ".flac", ".mp3", ".wav" }; // Add other music file extensions here
 
-    
-    public static void ProcessMusicFolders(string baseDir)
+    public void ProcessMusicFolders(string baseDir)
     {
-        Logger.TraceInformation($"Processing music folders in directory: {baseDir}");
-        Console.WriteLine($"Processing music folders in directory: {baseDir}");
         foreach (var dir in Directory.EnumerateDirectories(baseDir))
         {
-            Logger.TraceInformation($"Processing directory: {dir}");
-            Console.WriteLine($"Processing directory: {dir}");
-            
-            var files = Directory.EnumerateFiles(dir).Where(file => IsValidMusicFile(file));
-            if (!files.Any())
+            logger.Information($"Processing directory: {dir}");
+
+            var files = Directory.EnumerateFiles(dir).Where(IsValidMusicFile);
+
+            var musicFiles = files as string[] ?? files.ToArray();
+
+            if (!musicFiles.Any())
             {
-                Logger.TraceInformation($"No Music files found in directory: {dir}");
-                Console.WriteLine($"    No Music files found in directory: {dir}");
+                logger.Information($"No Music files found in directory: {dir}");
+                ProcessMusicFolders(dir); // Continue processing subdirectories
                 continue;
             }
+
             var candidaImages = GetCoverImages(dir);
 
             var selectedImage = SelectACoverImage(candidaImages);
             if (selectedImage == null)
             {
-                Logger.TraceInformation($"No cover images found in directory: {dir}");
-                Console.WriteLine($"    No cover images found in directory: {dir}");
+                logger.Information($"No cover images found in directory: {dir}");
                 continue;
             }
 
             if (selectedImage != null && MustBeOptimized(selectedImage, MaxSize))
             {
                 selectedImage = CreateArchiveOfImage(selectedImage);
-                OptimizeImage(selectedImage);
+                if (selectedImage != null) selectedImage = OptimizeImage(selectedImage);
             }
 
-            foreach (var musicFile in files)
+            foreach (var musicFile in musicFiles)
             {
                 UpdateMusicFileImage(musicFile, selectedImage);
             }
         }
+
         // Recursively process subdirectories
         var subdirectories = Directory.GetDirectories(baseDir);
         foreach (var subdirectory in subdirectories)
@@ -61,8 +61,8 @@ class CoverOptimizer
             ProcessMusicFolders(subdirectory);
         }
     }
-    
-    private static bool IsValidMusicFile(string filePath)
+
+    private bool IsValidMusicFile(string filePath)
     {
         var extension = Path.GetExtension(filePath).ToLower();
         return MusicFileExtensionHelper.ExtensionMap.ContainsValue(extension);
@@ -91,7 +91,7 @@ class CoverOptimizer
         }
     }
 
-    public static void UpdateMusicFileImage(string musicFilePath, string imagePath)
+    private void UpdateMusicFileImage(string musicFilePath, string imagePath)
     {
         // Load the FLAC file
         var file = TagLib.File.Create(musicFilePath);
@@ -111,9 +111,8 @@ class CoverOptimizer
         // // Add the picture to the Vorbis comment
         // var tag = file.Tag as TagLib.Ogg.XiphComment;
         // Access the tag information
-        
-     
-     
+
+
         var extension = Path.GetExtension(musicFilePath).ToLower();
         var musicFileExtension = MusicFileExtensionHelper.ExtensionMap
             .FirstOrDefault(x => x.Value == extension).Key;
@@ -124,14 +123,14 @@ class CoverOptimizer
                 tag = file.Tag;
                 break;
             case MusicFileExtension.Mp3:
-                tag = file.Tag; 
+                tag = file.Tag;
                 break;
             case MusicFileExtension.Wav:
-                tag = file.Tag;                break;
+                tag = file.Tag; break;
             case MusicFileExtension.Wma:
-                tag = file.Tag;                break;
+                tag = file.Tag; break;
             case MusicFileExtension.Ogg:
-                    tag = file.Tag;
+                tag = file.Tag;
                 break;
             case MusicFileExtension.Alac:
                 tag = file.Tag;
@@ -142,21 +141,17 @@ class CoverOptimizer
             default:
                 throw new NotSupportedException($"Unsupported file extension: {extension}");
         }
+
         if (tag != null)
         {
-            tag.Pictures = new TagLib.IPicture[] { picture };
+            tag.Pictures = [picture];
         }
         
-        // Print the artist, album, and title
-        Console.WriteLine($"Artist: {tag.FirstPerformer}");
-        Console.WriteLine($"Album: {tag.Album}");
-        Console.WriteLine($"Title: {tag.Title}");
-
         // Save the FLAC file
         file.Save();
     }
 
-    private static string RenameImage(string filePath, string newName)
+    private string RenameImage(string filePath, string newName)
     {
         string directory = Path.GetDirectoryName(filePath) ?? string.Empty;
         string extension = Path.GetExtension(filePath);
@@ -165,7 +160,7 @@ class CoverOptimizer
         return newFilePath;
     }
 
-    private static string? SelectACoverImage(List<string>? candidaImages)
+    private string? SelectACoverImage(List<string>? candidaImages)
     {
         if (candidaImages == null || candidaImages.Count == 0)
         {
@@ -222,7 +217,7 @@ class CoverOptimizer
     /// </summary>
     /// <param name="directory"></param>
     /// <returns></returns>
-    public static List<string>? GetCoverImages(string directory)
+    public List<string>?  GetCoverImages(string directory)
 
     {
         try
@@ -250,7 +245,7 @@ class CoverOptimizer
         }
     }
 
-    private static void ArchiveCover(List<string> coverImages)
+    private void ArchiveCover(List<string> coverImages)
     {
         for (int i = 1; i < coverImages.Count; i++)
         {
@@ -263,7 +258,7 @@ class CoverOptimizer
         }
     }
 
-    static string AddSuffixToFilePath(string filePath, string suffix)
+    string AddSuffixToFilePath(string filePath, string suffix)
     {
         string directory = Path.GetDirectoryName(filePath);
         string filenameWithoutExt = Path.GetFileNameWithoutExtension(filePath);
@@ -274,25 +269,24 @@ class CoverOptimizer
         return Path.Combine(directory, newFilename);
     }
 
-    static string GetNewFilePath(string filePath)
+    string GetNewFilePath(string filePath)
     {
         string directory = Path.GetDirectoryName(filePath) ?? string.Empty;
         return Path.Combine(directory, "cover.jpg");
     }
 
-    static void OptimizeImage(string imagePath)
+    string OptimizeImage(string imagePath)
     {
         try
         {
-            if (string.IsNullOrEmpty(imagePath)) return;
-
+            if (string.IsNullOrEmpty(imagePath)) return imagePath;
 
             using (var inputStream = File.OpenRead(imagePath))
             using (var bitmap = SKBitmap.Decode(inputStream))
             {
                 int width = bitmap.Width, height = bitmap.Height;
 
-                // Vérifier si la taille doit être réduite
+                // Check if the size needs to be reduced
                 if (width > MaxSize || height > MaxSize)
                 {
                     float scale = Math.Min((float)MaxSize / width, (float)MaxSize / height);
@@ -304,24 +298,22 @@ class CoverOptimizer
                 {
                     if (resizedBitmap == null)
                     {
-                        Console.WriteLine($"⚠️ Erreur lors du redimensionnement : {imagePath}");
-                        return;
+                        Console.WriteLine($"⚠️ Error resizing: {imagePath}");
+                        return imagePath;
                     }
 
                     string newPath = GetNewFilePath(imagePath);
-                    SKEncodedImageFormat format =
-                        imagePath.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) &&
-                        new FileInfo(imagePath).Length > 500 * 1024
-                            ? SKEncodedImageFormat.Jpeg
-                            : SKEncodedImageFormat.Png;
-
-                    if (imagePath.EndsWith(".png", StringComparison.OrdinalIgnoreCase) &&
-                        new FileInfo(imagePath).Length > 500 * 1024)
+                    SKEncodedImageFormat format = imagePath switch
                     {
-                        newPath = Path.ChangeExtension(newPath, ".jpg");
-                        format = SKEncodedImageFormat.Jpeg;
-                        File.Delete(imagePath);
-                    }
+                        _ when imagePath.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+                               imagePath.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) => SKEncodedImageFormat
+                            .Jpeg,
+                        _ when imagePath.EndsWith(".png", StringComparison.OrdinalIgnoreCase) => SKEncodedImageFormat
+                            .Png,
+                        _ when imagePath.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) => SKEncodedImageFormat
+                            .Webp,
+                        _ => throw new NotSupportedException($"Unsupported image format: {imagePath}")
+                    };
 
                     using (var image = SKImage.FromBitmap(resizedBitmap))
                     using (var data = image.Encode(format, JpegQuality))
@@ -333,18 +325,19 @@ class CoverOptimizer
                     // Set file permissions to ensure it is viewable
                     File.SetAttributes(newPath, FileAttributes.Normal);
                     File.SetLastWriteTime(newPath, DateTime.Now);
-                    // RenameImage(newPath, "cover");
-                    Console.WriteLine($"✅ Optimisé : {newPath}");
+                    Console.WriteLine($"✅ Optimized: {newPath}");
+                    return newPath;
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Erreur sur {imagePath} : {ex.Message}");
+            Console.WriteLine($"❌ Error on {imagePath}: {ex.Message}");
+            return imagePath;
         }
     }
 
-    static bool MustBeOptimized(String filePath, int resolution)
+    bool MustBeOptimized(String filePath, int resolution)
     {
         using (var inputStream = File.OpenRead(filePath))
         using (var bitmap = SKBitmap.Decode(inputStream))
@@ -357,7 +350,7 @@ class CoverOptimizer
         }
     }
 
-    static string? CreateArchiveOfImage(string filePath)
+    string? CreateArchiveOfImage(string filePath)
     {
         string? newPath = null;
 
